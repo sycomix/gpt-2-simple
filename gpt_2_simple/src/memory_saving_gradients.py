@@ -81,10 +81,10 @@ def gradients(ys, xs, grad_ys=None, checkpoints='collection', **kwargs):
 
     # don't recompute xs, remove variables
     xs_ops = _to_ops(xs)
-    fwd_ops = [op for op in fwd_ops if not op in xs_ops]
-    fwd_ops = [op for op in fwd_ops if not '/assign' in op.name]
-    fwd_ops = [op for op in fwd_ops if not '/Assign' in op.name]
-    fwd_ops = [op for op in fwd_ops if not '/read' in op.name]
+    fwd_ops = [op for op in fwd_ops if op not in xs_ops]
+    fwd_ops = [op for op in fwd_ops if '/assign' not in op.name]
+    fwd_ops = [op for op in fwd_ops if '/Assign' not in op.name]
+    fwd_ops = [op for op in fwd_ops if '/read' not in op.name]
     ts_all = ge.filter_ts(fwd_ops, True) # get the tensors
     ts_all = [t for t in ts_all if '/read' not in t.name]
     ts_all = set(ts_all) - set(xs) - set(ys)
@@ -107,6 +107,7 @@ def gradients(ys, xs, grad_ys=None, checkpoints='collection', **kwargs):
                     return [int(e if e.value is not None else 64) for e in t]
                 except:
                     return [0]  # unknown shape
+
             ts_all = [t for t in ts_all if np.prod(fixdims(t.shape)) > MIN_CHECKPOINT_NODE_SIZE]
             ts_all = [t for t in ts_all if 'L2Loss' not in t.name]
             ts_all = [t for t in ts_all if 'entropy' not in t.name]
@@ -135,8 +136,8 @@ def gradients(ys, xs, grad_ys=None, checkpoints='collection', **kwargs):
                     b = set(ge.get_backward_walk_ops(t.op, inclusive=True, within_ops=fwd_ops))
                     f = set(ge.get_forward_walk_ops(t.op, inclusive=False, within_ops=fwd_ops))
                     # check that there are not shortcuts
-                    b_inp = set([inp for op in b for inp in op.inputs]).intersection(ts_all)
-                    f_inp = set([inp for op in f for inp in op.inputs]).intersection(ts_all)
+                    b_inp = {inp for op in b for inp in op.inputs}.intersection(ts_all)
+                    f_inp = {inp for op in f for inp in op.inputs}.intersection(ts_all)
                     if not set(b_inp).intersection(f_inp) and len(b_inp)+len(f_inp) >= len(ts_all):
                         bottleneck_ts.append(t)  # we have a bottleneck!
                     else:
@@ -162,7 +163,7 @@ def gradients(ys, xs, grad_ys=None, checkpoints='collection', **kwargs):
                 checkpoints = sorted_bottlenecks[step::step]
 
         else:
-            raise Exception('%s is unsupported input for "checkpoints"' % (checkpoints,))
+            raise Exception(f'{checkpoints} is unsupported input for "checkpoints"')
 
     checkpoints = list(set(checkpoints).intersection(ts_all))
 
@@ -196,7 +197,7 @@ def gradients(ys, xs, grad_ys=None, checkpoints='collection', **kwargs):
     checkpoints_disconnected = {}
     for x in checkpoints:
         if x.op and x.op.name is not None:
-            grad_node = tf.stop_gradient(x, name=x.op.name+"_sg")
+            grad_node = tf.stop_gradient(x, name=f"{x.op.name}_sg")
         else:
             grad_node = tf.stop_gradient(x)
         checkpoints_disconnected[x] = grad_node
@@ -233,8 +234,12 @@ def gradients(ys, xs, grad_ys=None, checkpoints='collection', **kwargs):
 
     # partial derivatives to the checkpointed nodes
     # dictionary of "node: backprop" for nodes in the boundary
-    d_checkpoints = {r: dr for r,dr in zip(checkpoints_disconnected.keys(),
-                                        dv[:len(checkpoints_disconnected)])}
+    d_checkpoints = dict(
+        zip(
+            checkpoints_disconnected.keys(),
+            dv[: len(checkpoints_disconnected)],
+        )
+    )
     # partial derivatives to xs (usually the params of the neural net)
     d_xs = dv[len(checkpoints_disconnected):]
 
@@ -318,8 +323,7 @@ def tf_toposort(ts, within_ops=None):
     # only keep the tensors from our original list
     ts_sorted_lists = []
     for l in sorted_ts:
-        keep = list(set(l).intersection(ts))
-        if keep:
+        if keep := list(set(l).intersection(ts)):
             ts_sorted_lists.append(keep)
 
     return ts_sorted_lists
@@ -331,30 +335,26 @@ def fast_backward_ops(within_ops, seed_ops, stop_at_ts):
 
 @contextlib.contextmanager
 def capture_ops():
-  """Decorator to capture ops created in the block.
+    """Decorator to capture ops created in the block.
   with capture_ops() as ops:
     # create some ops
   print(ops) # => prints ops created.
   """
 
-  micros = int(time.time()*10**6)
-  scope_name = str(micros)
-  op_list = []
-  with tf.compat.v1.name_scope(scope_name):
-    yield op_list
+    micros = int(time.time()*10**6)
+    scope_name = str(micros)
+    op_list = []
+    with tf.compat.v1.name_scope(scope_name):
+      yield op_list
 
-  g = tf.compat.v1.get_default_graph()
-  op_list.extend(ge.select_ops(scope_name+"/.*", graph=g))
+    g = tf.compat.v1.get_default_graph()
+    op_list.extend(ge.select_ops(f"{scope_name}/.*", graph=g))
 
 def _to_op(tensor_or_op):
-  if hasattr(tensor_or_op, "op"):
-    return tensor_or_op.op
-  return tensor_or_op
+    return tensor_or_op.op if hasattr(tensor_or_op, "op") else tensor_or_op
 
 def _to_ops(iterable):
-  if not _is_iterable(iterable):
-    return iterable
-  return [_to_op(i) for i in iterable]
+    return [_to_op(i) for i in iterable] if _is_iterable(iterable) else iterable
 
 def _is_iterable(o):
   try:
@@ -377,16 +377,13 @@ def debug_print(s, *args):
     print("DEBUG "+s % tuple(formatted_args))
 
 def format_ops(ops, sort_outputs=True):
-  """Helper method for printing ops. Converts Tensor/Operation op to op.name,
+    """Helper method for printing ops. Converts Tensor/Operation op to op.name,
   rest to str(op)."""
 
-  if hasattr(ops, '__iter__') and not isinstance(ops, str):
+    if not hasattr(ops, '__iter__') or isinstance(ops, str):
+        return ops.name if hasattr(ops, "name") else str(ops)
     l = [(op.name if hasattr(op, "name") else str(op)) for op in ops]
-    if sort_outputs:
-      return sorted(l)
-    return l
-  else:
-    return ops.name if hasattr(ops, "name") else str(ops)
+    return sorted(l) if sort_outputs else l
 
 def my_add_control_inputs(wait_to_do_ops, inputs_to_do_before):
     for op in wait_to_do_ops:

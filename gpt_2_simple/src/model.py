@@ -82,8 +82,10 @@ def conv1d(x, scope, nf, *, w_init_stdev=0.02):
         *start, nx = shape_list(x)
         w = tf.compat.v1.get_variable('w', [1, nx, nf], initializer=tf.compat.v1.random_normal_initializer(stddev=w_init_stdev))
         b = tf.compat.v1.get_variable('b', [nf], initializer=tf.compat.v1.constant_initializer(0))
-        c = tf.reshape(tf.matmul(tf.reshape(x, [-1, nx]), tf.reshape(w, [-1, nf]))+b, start+[nf])
-        return c
+        return tf.reshape(
+            tf.matmul(tf.reshape(x, [-1, nx]), tf.reshape(w, [-1, nf])) + b,
+            start + [nf],
+        )
 
 def attention_mask(nd, ns, *, dtype):
     """1's in the lower triangle, counting from the lower right corner.
@@ -146,8 +148,7 @@ def mlp(x, scope, n_state, *, hparams):
     with tf.compat.v1.variable_scope(scope):
         nx = get_value(x.shape[-1])
         h = gelu(conv1d(x, 'c_fc', n_state))
-        h2 = conv1d(h, 'c_proj', nx)
-        return h2
+        return conv1d(h, 'c_proj', nx)
 
 
 def block(x, scope, *, past, hparams):
@@ -175,14 +176,11 @@ def positions_for(tokens, past_length):
 
 
 def get_value(a):
-    if hasattr(a, 'value'):
-        return a.value
-    return a
+    return a.value if hasattr(a, 'value') else a
 
 
 def model(hparams, X, past=None, scope='model', gpus=[], reuse=False):
     with tf.compat.v1.variable_scope(scope, reuse=reuse):
-        results = {}
         batch, sequence = shape_list(X)
 
         wpe = tf.compat.v1.get_variable('wpe', [hparams.n_ctx, hparams.n_embd],
@@ -210,7 +208,7 @@ def model(hparams, X, past=None, scope='model', gpus=[], reuse=False):
                     h, present = block(h, 'h%d' % layer, past=past, hparams=hparams)
                     tf.compat.v1.add_to_collection('checkpoints', h)
                     presents.append(present)
-        results['present'] = tf.stack(presents, axis=1)
+        results = {'present': tf.stack(presents, axis=1)}
         h = norm(h, 'ln_f')
 
         # Language model loss.  Do tokens <n predict token n?

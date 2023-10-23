@@ -50,11 +50,10 @@ def download_file_with_progress(url_base, sub_dir, model_name, file_name):
 
     # set to download 1MB at a time. This could be much larger with no issue
     DOWNLOAD_CHUNK_SIZE = 1024 * 1024
-    r = requests.get(url_base + "/models/" + model_name + "/" + file_name, stream=True)
+    r = requests.get(f"{url_base}/models/{model_name}/{file_name}", stream=True)
     with open(os.path.join(sub_dir, file_name), 'wb') as f:
         file_size = int(r.headers["content-length"])
-        with tqdm(ncols=100, desc="Fetching " + file_name,
-                  total=file_size, unit_scale=True) as pbar:
+        with tqdm(ncols=100, desc=f"Fetching {file_name}", total=file_size, unit_scale=True) as pbar:
             for chunk in r.iter_content(chunk_size=DOWNLOAD_CHUNK_SIZE):
                 f.write(chunk)
                 pbar.update(DOWNLOAD_CHUNK_SIZE)
@@ -166,7 +165,7 @@ def finetune(sess,
             pass
 
     maketree(checkpoint_path)
-    files = [f for f in os.listdir(checkpoint_path)]
+    files = list(os.listdir(checkpoint_path))
     for file in ['hparams.json', 'encoder.json', 'vocab.bpe']:
         try:
             shutil.copyfile(os.path.join(model_dir, model_name, file),
@@ -181,8 +180,7 @@ def finetune(sess,
         hparams.override_from_dict(json.load(f))
 
     if sample_length > hparams.n_ctx:
-        raise ValueError(
-            "Can't get samples longer than window size: %s" % hparams.n_ctx)
+        raise ValueError(f"Can't get samples longer than window size: {hparams.n_ctx}")
 
     if model_name not in ['117M', '124M']:
         print('For larger models, the recommended finetune() parameters are:')
@@ -388,10 +386,7 @@ def load_gpt2(sess,
 
     context = tf.compat.v1.placeholder(tf.int32, [1, None])
 
-    gpus = []
-    if multi_gpu:
-        gpus = get_available_gpus()
-
+    gpus = get_available_gpus() if multi_gpu else []
     output = model.model(hparams=hparams, X=context, gpus=gpus, reuse=reuse)
 
     if checkpoint=='latest':
@@ -489,19 +484,17 @@ def generate(sess,
                 truncate_esc = re.escape(truncate)
                 if prefix and not include_prefix:
                     prefix_esc = re.escape(prefix)
-                    pattern = '(?:{})(.*?)(?:{})'.format(prefix_esc,
-                                                         truncate_esc)
+                    pattern = f'(?:{prefix_esc})(.*?)(?:{truncate_esc})'
                 else:
-                    pattern = '(.*?)(?:{})'.format(truncate_esc)
+                    pattern = f'(.*?)(?:{truncate_esc})'
 
-                trunc_text = re.search(pattern, gen_text, re.S)
-                if trunc_text:
+                if trunc_text := re.search(pattern, gen_text, re.S):
                     gen_text = trunc_text.group(1)
             gen_text = gen_text.lstrip('\n')
             if destination_path:
-                f.write("{}\n{}".format(gen_text, sample_delim))
+                f.write(f"{gen_text}\n{sample_delim}")
             if not return_as_list and not destination_path:
-                print("{}\n{}".format(gen_text, sample_delim), end='')
+                print(f"{gen_text}\n{sample_delim}", end='')
             gen_texts.append(gen_text)
 
     if destination_path:
@@ -569,9 +562,7 @@ def is_mounted():
 
 def get_tarfile_name(checkpoint_folder):
     """Converts a folder path into a filename for a .tar archive"""
-    tarfile_name = checkpoint_folder.replace(os.path.sep, '_') + '.tar'
-
-    return tarfile_name
+    return checkpoint_folder.replace(os.path.sep, '_') + '.tar'
 
 
 def copy_checkpoint_to_gdrive(run_name='run1', copy_folder=False):
@@ -581,7 +572,9 @@ def copy_checkpoint_to_gdrive(run_name='run1', copy_folder=False):
     checkpoint_folder = os.path.join('checkpoint', run_name)
 
     if copy_folder:
-        shutil.copytree(checkpoint_folder, "/content/drive/MyDrive/" + checkpoint_folder)
+        shutil.copytree(
+            checkpoint_folder, f"/content/drive/MyDrive/{checkpoint_folder}"
+        )
     else:
         file_path = get_tarfile_name(checkpoint_folder)
 
@@ -589,7 +582,7 @@ def copy_checkpoint_to_gdrive(run_name='run1', copy_folder=False):
         with tarfile.open(file_path, 'w') as tar:
             tar.add(checkpoint_folder)
 
-        shutil.copyfile(file_path, "/content/drive/MyDrive/" + file_path)
+        shutil.copyfile(file_path, f"/content/drive/MyDrive/{file_path}")
 
 
 def copy_checkpoint_from_gdrive(run_name='run1', copy_folder=False):
@@ -599,11 +592,13 @@ def copy_checkpoint_from_gdrive(run_name='run1', copy_folder=False):
     checkpoint_folder = os.path.join('checkpoint', run_name)
 
     if copy_folder:
-        shutil.copytree("/content/drive/MyDrive/" + checkpoint_folder, checkpoint_folder)
+        shutil.copytree(
+            f"/content/drive/MyDrive/{checkpoint_folder}", checkpoint_folder
+        )
     else:
         file_path = get_tarfile_name(checkpoint_folder)
 
-        shutil.copyfile("/content/drive/MyDrive/" + file_path, file_path)
+        shutil.copyfile(f"/content/drive/MyDrive/{file_path}", file_path)
 
         with tarfile.open(file_path, 'r') as tar:
             tar.extractall()
@@ -613,25 +608,31 @@ def copy_file_to_gdrive(file_path):
     """Copies a file to a mounted Google Drive."""
     is_mounted()
 
-    shutil.copyfile(file_path, "/content/drive/MyDrive/" + file_path)
+    shutil.copyfile(file_path, f"/content/drive/MyDrive/{file_path}")
 
 
 def copy_file_from_gdrive(file_path):
     """Copies a file from a mounted Google Drive."""
     is_mounted()
 
-    shutil.copyfile("/content/drive/MyDrive/" + file_path, file_path)
+    shutil.copyfile(f"/content/drive/MyDrive/{file_path}", file_path)
 
 
 def is_gpt2_downloaded(model_dir='models', model_name='124M'):
     """Checks if the original model + associated files are present in folder."""
 
-    for filename in ['checkpoint', 'encoder.json', 'hparams.json',
-                     'model.ckpt.data-00000-of-00001', 'model.ckpt.index',
-                     'model.ckpt.meta', 'vocab.bpe']:
-        if not os.path.isfile(os.path.join(model_dir, model_name, filename)):
-            return False
-    return True
+    return all(
+        os.path.isfile(os.path.join(model_dir, model_name, filename))
+        for filename in [
+            'checkpoint',
+            'encoder.json',
+            'hparams.json',
+            'model.ckpt.data-00000-of-00001',
+            'model.ckpt.index',
+            'model.ckpt.meta',
+            'vocab.bpe',
+        ]
+    )
 
 
 def encode_csv(csv_path, out_path='csv_encoded.txt', header=True,
